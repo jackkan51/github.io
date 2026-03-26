@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>HUD Visualizer PRO ULTRA v3 + MIC FIXED + GUNDAM UI</title>
+
+<style>
+  body {
+    margin:0; overflow:hidden;
+    background:#000;
+    font-family:"Segoe UI";
+  }
+
+  video {
+    position:absolute;
+    z-index:1;
+    width:100%; height:100%;
+    object-fit:cover;
+    filter:brightness(0.35);
+  }
+
+  canvas {
+    position:absolute; 
+    z-index:2;
+    top:0; left:0;
+  }
+
+  /* ✅ HUD BUTTON WRAPPER */
+  .controls{
+    position:absolute;
+    z-index:10;
+    top:20px;
+    left:50%;
+    transform:translateX(-50%);
+    display:flex;
+    align-items:center;
+    gap:12px;
+  }
+
+  /* ✅ ปุ่มพื้นฐานสไตล์กันดั้ม */
+  .hud-btn{
+    min-width:140px;
+    padding:12px 20px;
+    font-size:18px;
+    font-weight:700;
+    text-align:center;
+    cursor:pointer;
+
+    color:#E6F2FF;
+    background:rgba(0, 32, 96, 0.65);      /* Gundam Blue */
+    border:2px solid #0080FF;
+    border-radius:10px;
+
+    text-shadow:0 0 8px #80BFFF;
+    box-shadow:
+      0 0 12px #0070E0 inset,
+      0 0 18px #0080FF;
+
+    backdrop-filter:blur(4px);
+    transition:0.15s;
+  }
+
+  .hud-btn:hover{
+    transform:translateY(-2px);
+    background:rgba(0, 80, 200, 0.6);
+  }
+
+  /* ✅ ปุ่มไมค์สีแดงแบบกันดั้ม */
+  .hud-btn.mic{
+    background:rgba(80,0,0,0.6);
+    border-color:#FF2A2A;
+    box-shadow:
+      0 0 12px #FF2A2A inset,
+      0 0 18px #FF2A2A;
+    text-shadow:0 0 8px #FF5555;
+  }
+  .hud-btn.mic:hover{
+    background:rgba(150,0,0,0.65);
+  }
+
+  /* ✅ ปุ่ม BACK สีเหลืองกันดั้ม */
+  .hud-btn.back{
+    background:rgba(90,70,0,0.6);
+    border-color:#FFCC00;
+    box-shadow:
+      0 0 12px #FFCC00 inset,
+      0 0 18px #FFCC00;
+    text-shadow:0 0 8px #FFDD55;
+  }
+  .hud-btn.back:hover{
+    background:rgba(150,120,0,0.65);
+  }
+
+  /* ✅ ตัวขั้น HUD สีเหลืองกันดั้ม */
+  .hud-separator{
+    width:3px;
+    height:45px;
+    background:#FFCC00;
+    box-shadow:0 0 12px #FFCC00;
+    border-radius:2px;
+  }
+
+  /* ✅ Timeline */
+  .timeline-wrapper{
+    position:absolute; z-index:10;
+    bottom:40px; left:50%;
+    transform:translateX(-50%);
+    width:70%;
+  }
+
+  #timeline{
+    width:100%; height:12px;
+    appearance:none;
+    background:rgba(0,255,200,0.15);
+    border:2px solid #00ffcc;
+    border-radius:10px;
+    box-shadow:0 0 12px #00ffcc inset;
+  }
+
+  #timeline::-webkit-slider-thumb{
+    appearance:none;
+    width:18px; height:18px;
+    background:#00ffcc;
+    border-radius:50%;
+    box-shadow:0 0 12px #00ffcc;
+  }
+</style>
+</head>
+
+<body>
+
+<!-- ✅ GUNDAM-STYLE BUTTON BAR -->
+<div class="controls">
+
+  <input id="fileInput" type="file" accept=".mp3,.wav,.flac" class="hud-btn">
+
+  <button class="hud-btn" onclick="playMusic()">▶ PLAY</button>
+  <button class="hud-btn" onclick="pauseMusic()">⏸ PAUSE</button>
+  <button class="hud-btn" onclick="stopMusic()">⏹ STOP</button>
+
+  <div class="hud-separator"></div>
+
+  <button class="hud-btn mic" onclick="enableMic()">🎤 MIC MODE</button>
+  <button class="hud-btn back" onclick="disableMic()">🎵 BACK</button>
+
+  <div class="hud-separator"></div>
+
+  <button class="hud-btn" onclick="setSize(0.7)">เล็ก</button>
+  <button class="hud-btn" onclick="setSize(1)">กลาง</button>
+  <button class="hud-btn" onclick="setSize(1.4)">ใหญ่</button>
+
+</div>
+
+<!-- ✅ TIMELINE -->
+<div class="timeline-wrapper">
+  <input id="timeline" type="range" min="0" max="100" value="0">
+</div>
+
+<!-- ✅ Background -->
+car-video.mp4"></video>
+
+<canvas id="canvas"></canvas>
+
+<script>
+/* ====================================================
+   ✅ CANVAS
+==================================================== */
+const canvas=document.getElementById("canvas");
+const ctx=canvas.getContext("2d");
+function resize(){ canvas.width=innerWidth; canvas.height=innerHeight; }
+resize(); onresize=resize;
+
+/* ====================================================
+   ✅ AUDIO SYSTEM
+==================================================== */
+let audioCtx,audioBuffer,sourceNode;
+let analyserL, analyserR, analyserMix;
+let dataL,dataR,dataMix,timeMix;
+
+let micMode=false;
+let micStream=null;
+
+let isPlaying=false;
+let startTime=0;
+let pausedAt=0;
+let circleScale=1;
+
+/* ====================================================
+   ✅ LOAD MUSIC
+==================================================== */
+fileInput.onchange = async e=>{
+  micMode=false;
+  const file=e.target.files[0];
+  if(!file) return;
+
+  audioCtx=new AudioContext();
+  const arr=await file.arrayBuffer();
+  audioBuffer=await audioCtx.decodeAudioData(arr);
+
+  setupAnalysers();
+};
+
+/* ====================================================
+   ✅ SETUP ANALYSERS
+==================================================== */
+function setupAnalysers(){
+  analyserL=audioCtx.createAnalyser();
+  analyserR=audioCtx.createAnalyser();
+  analyserMix=audioCtx.createAnalyser();
+
+  analyserL.fftSize=2048;
+  analyserR.fftSize=2048;
+  analyserMix.fftSize=2048;
+
+  dataL=new Uint8Array(analyserL.frequencyBinCount);
+  dataR=new Uint8Array(analyserR.frequencyBinCount);
+  dataMix=new Uint8Array(analyserMix.frequencyBinCount);
+  timeMix=new Uint8Array(analyserMix.frequencyBinCount);
+}
+
+/* ====================================================
+   ✅ MIC MODE
+==================================================== */
+async function enableMic(){
+  micMode=true;
+
+  if(!audioCtx) audioCtx=new AudioContext();
+
+  micStream = await navigator.mediaDevices.getUserMedia({
+    audio:{
+      channelCount:2,
+      echoCancellation:false,
+      noiseSuppression:false,
+      autoGainControl:false
+    }
+  });
+
+  setupAnalysers();
+
+  const micSource = audioCtx.createMediaStreamSource(micStream);
+  const split = audioCtx.createChannelSplitter(2);
+
+  micSource.connect(split);
+  split.connect(analyserL,0);
+  split.connect(analyserR,1);
+  split.connect(analyserMix);
+
+  isPlaying=true;
+  draw();
+}
+
+/* ✅ ปิดไมค์ + กลับโหมดเพลง */
+function disableMic(){
+  micMode=false;
+
+  if(micStream){
+    micStream.getTracks().forEach(t=>t.stop());
+    micStream=null;
+  }
+
+  isPlaying = false;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  if(audioBuffer){
+    setupAnalysers();
+  }
+}
+
+/* ====================================================
+   ✅ MUSIC MODE
+==================================================== */
+function createSource(){
+  const s=audioCtx.createBufferSource();
+  s.buffer=audioBuffer;
+
+  const split=audioCtx.createChannelSplitter(2);
+  s.connect(split);
+  split.connect(analyserL,0);
+  split.connect(analyserR,1);
+
+  s.connect(analyserMix);
+  analyserMix.connect(audioCtx.destination);
+
+  return s;
+}
+
+function playMusic(){
+  if(micMode) return;
+
+  if(isPlaying) sourceNode.stop();
+
+  sourceNode=createSource();
+  startTime=audioCtx.currentTime-pausedAt;
+  sourceNode.start(0,pausedAt);
+
+  isPlaying=true;
+  draw();
+}
+
+function pauseMusic(){
+  if(micMode) return;
+  if(!isPlaying) return;
+
+  pausedAt=audioCtx.currentTime-startTime;
+  sourceNode.stop();
+  isPlaying=false;
+}
+
+function stopMusic(){
+  if(micMode) return;
+  if(!isPlaying) return;
+
+  sourceNode.stop();
+  isPlaying=false;
+  pausedAt=0;
+  timeline.value=0;
+}
+
+function setSize(s){ circleScale=s; }
+
+/* ====================================================
+   ✅ Timeline (เพลงเท่านั้น)
+==================================================== */
+timeline.oninput=()=>{
+  if(micMode || !audioBuffer) return;
+
+  pausedAt=(timeline.value/100)*audioBuffer.duration;
+
+  if(isPlaying){
+    sourceNode.stop();
+    playMusic();
+  }
+};
+
+/* ====================================================
+   ✅ UTIL
+==================================================== */
+function avgRange(d,lo,hi){
+  const ny=audioCtx.sampleRate/2;
+  let s=Math.floor(lo/ny*d.length);
+  let e=Math.floor(hi/ny*d.length);
+  let sum=0,c=0;
+  for(let i=s;i<e;i++){ sum+=d[i]; c++; }
+  return sum/c;
+}
+
+let bassHist=[];
+function detectBeat(v){
+  bassHist.push(v);
+  if(bassHist.length>60) bassHist.shift();
+  let avg=bassHist.reduce((a,b)=>a+b,0)/bassHist.length;
+  return v>avg*1.35;
+}
+
+function freqColor(v){
+  if(v<85) return "rgba(255,0,0,0.85)";
+  if(v<170)return "rgba(255,165,0,0.85)";
+  return "rgba(0,255,0,0.85)";
+}
+
+/* ====================================================
+   ✅ DRAW LOOP
+==================================================== */
+let stereoOffset=0, stereoTarget=0;
+
+function draw(){
+  if(!isPlaying) return;
+
+  requestAnimationFrame(draw);
+
+  analyserMix.getByteFrequencyData(dataMix);
+  analyserMix.getByteTimeDomainData(timeMix);
+  analyserL.getByteFrequencyData(dataL);
+  analyserR.getByteFrequencyData(dataR);
+
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  const cx=canvas.width/2, cy=canvas.height/2;
+
+  /* ✅ Bass Pulse */
+  let rawBass=avgRange(dataMix,20,150);
+  let bass=rawBass*0.55;
+  let beat=detectBeat(bass);
+
+  let radius=bass*1.2*circleScale;
+  if(beat) radius*=1.25;
+  radius=Math.min(radius,canvas.height*0.22);
+
+  ctx.beginPath();
+  ctx.arc(cx,cy,radius,0,Math.PI*2);
+  ctx.fillStyle=freqColor(bass);
+  ctx.shadowBlur=beat?100:60;
+  ctx.shadowColor=freqColor(bass);
+  ctx.fill();
+  ctx.shadowBlur=0;
+
+  /* ✅ Circular Orbit */
+  ctx.beginPath();
+  for(let i=0;i<timeMix.length;i++){
+    let t=timeMix[i]/255;
+    let r=radius+t*80;
+    let ang=(i/timeMix.length)*Math.PI*2;
+    let x=cx+Math.cos(ang)*r;
+    let y=cy+Math.sin(ang)*r;
+    if(i==0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  }
+  ctx.strokeStyle="rgba(0,255,200,0.4)";
+  ctx.lineWidth=3;
+  ctx.stroke();
+
+  /* ✅ L/R Circles */
+  let lAmp=avgRange(dataL,20,250);
+  let rAmp=avgRange(dataR,20,250);
+
+  stereoTarget=(rAmp-lAmp)*0.6;
+  stereoOffset+=(stereoTarget-stereoOffset)*0.12;
+
+  const gap=canvas.width*0.25;
+  const LX=cx-gap+stereoOffset;
+  const RX=cx+gap+stereoOffset;
+  const LY=canvas.height*0.45;
+
+  const LR=lAmp*0.55*circleScale;
+  const RR=rAmp*0.55*circleScale;
+
+  ctx.beginPath();
+  ctx.arc(LX,LY,LR,0,Math.PI*2);
+  ctx.fillStyle="rgba(0,150,255,0.4)";
+  ctx.fill();
+
+  ctx.font=`${LR*0.9}px Segoe UI`;
+  ctx.fillStyle="#00ccff";
+  ctx.textAlign="center";
+  ctx.textBaseline="middle";
+  ctx.shadowBlur=15;
+  ctx.shadowColor="#00ccff";
+  ctx.fillText("L",LX,LY);
+  ctx.shadowBlur=0;
+
+  ctx.beginPath();
+  ctx.arc(RX,LY,RR,0,Math.PI*2);
+  ctx.fillStyle="rgba(255,80,200,0.4)";
+  ctx.fill();
+
+  ctx.font=`${RR*0.9}px Segoe UI`;
+  ctx.fillStyle="#ff66dd";
+  ctx.shadowBlur=15;
+  ctx.shadowColor="#ff66dd";
+  ctx.fillText("R",RX,LY);
+  ctx.shadowBlur=0;
+
+  /* ✅ Spectrum */
+  const barW=canvas.width/dataMix.length;
+  for(let i=0;i<dataMix.length;i++){
+    let v=dataMix[i];
+    let h=(v/255)*(canvas.height*0.22);
+    ctx.fillStyle=freqColor(v);
+    ctx.fillRect(i*barW,canvas.height-h,barW-1,h);
+  }
+
+  /* ✅ timeline update */
+  if(!micMode){
+    const pos=audioCtx.currentTime-startTime;
+    timeline.value=(pos/audioBuffer.duration)*100;
+  }
+}
+</script>
+
+</body>
+</html>
